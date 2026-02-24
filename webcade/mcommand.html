@@ -1,1 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Missile Command Clone</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            background: linear-gradient(180deg, #001a00 0%, #003300 50%, #001a00 100%);
+            border: 2px solid #00ff00;
+            overflow: hidden;
+        }
+        
+        canvas {
+            display: block;
+            background-color: rgba(0, 0, 0, 0.3);
+        }
+        
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #00ff00;
+            font-size: 14px;
+            font-family: monospace;
+            z-index: 10;
+        }
+        
+        #score {
+            margin-bottom: 5px;
+        }
+        
+        .base-info {
+            font-size: 12px;
+            margin-top: 3px;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #00ff00;
+            padding: 30px;
+            text-align: center;
+            border: 2px solid #00ff00;
+            font-family: monospace;
+            display: none;
+            z-index: 100;
+            min-width: 300px;
+        }
+        
+        #gameOver h1 {
+            margin: 0 0 20px 0;
+            font-size: 32px;
+        }
+        
+        #gameOver p {
+            margin: 10px 0;
+        }
+        
+        #gameOver button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #00ff00;
+            color: #000;
+            border: none;
+            font-family: monospace;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        #gameOver button:hover {
+            background-color: #00cc00;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="hud">
+            <div id="score">SCORE: 0</div>
+            <div id="wave">WAVE: 1</div>
+            <div id="baseInfo">
+                <div class="base-info">Q BASE: 10</div>
+                <div class="base-info">W BASE: 10</div>
+                <div class="base-info">E BASE: 10</div>
+            </div>
+        </div>
+        <div id="gameOver">
+            <h1>GAME OVER</h1>
+            <p id="finalScore">SCORE: 0</p>
+            <p id="waveReached">WAVE: 1</p>
+            <button onclick="location.reload()">RESTART</button>
+        </div>
+    </div>
 
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = 800;
+        canvas.height = 600;
+
+        // Game state
+        const game = {
+            score: 0,
+            wave: 1,
+            gameRunning: true,
+            bases: {
+                q: { x: 100, y: 550, ammo: 10, maxAmmo: 10 },
+                w: { x: 400, y: 550, ammo: 10, maxAmmo: 10 },
+                e: { x: 700, y: 550, ammo: 10, maxAmmo: 10 }
+            }
+        };
+
+        // Pointer
+        const pointer = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            speedX: 0,
+            speedY: 0,
+            speed: 5,
+            radius: 8
+        };
+
+        // Input handling
+        const keys = {};
+        const mouse = { x: canvas.width / 2, y: canvas.height / 2, active: false };
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+            mouse.active = true;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            mouse.active = false;
+        });
+
+        // Arrays for game objects
+        let enemyMissiles = [];
+        let friendlyMissiles = [];
+        let explosions = [];
+        let particles = [];
+
+        // Enemy missile class
+        class EnemyMissile {
+            constructor(startX, startY, targetBase) {
+                this.x = startX;
+                this.y = startY;
+                this.targetBase = targetBase;
+                this.vx = (targetBase.x - startX) / 100;
+                this.vy = (targetBase.y - startY) / 100;
+                this.life = 100;
+                this.radius = 4;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+
+                // Check if reached target
+                const dist = Math.hypot(this.x - this.targetBase.x, this.y - this.targetBase.y);
+                if (dist < 20 || this.life <= 0) {
+                    return false; // Remove this missile
+                }
+                return true;
+            }
+
+            draw() {
+                ctx.fillStyle = '#ff3333';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = '#ff6666';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(this.x - this.vx * 10, this.y - this.vy * 10);
+                ctx.stroke();
+            }
+        }
+
+        // Friendly missile class
+        class FriendlyMissile {
+            constructor(fromBase, toX, toY) {
+                this.x = fromBase.x;
+                this.y = fromBase.y;
+                this.targetX = toX;
+                this.targetY = toY;
+                const dist = Math.hypot(toX - this.x, toY - this.y);
+                this.vx = (toX - this.x) / 30;
+                this.vy = (toY - this.y) / 30;
+                this.speed = 4;
+                this.life = 100;
+                this.radius = 3;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+
+                // Check if reached target
+                const dist = Math.hypot(this.x - this.targetX, this.y - this.targetY);
+                if (dist < 15 || this.life <= 0) {
+                    createExplosion(this.x, this.y, 40, '#ffff00');
+                    return false; // Remove this missile
+                }
+                return true;
+            }
+
+            draw() {
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = '#ffff88';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(this.x - this.vx * 8, this.y - this.vy * 8);
+                ctx.stroke();
+            }
+        }
+
+        // Explosion class
+        class Explosion {
+            constructor(x, y, radius, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.maxRadius = radius;
+                this.color = color;
+                this.life = 20;
+            }
+
+            update() {
+                this.life--;
+                this.radius = (this.life / 20) * this.maxRadius;
+                return this.life > 0;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color.replace(/\)/g, `, ${this.life / 20})`).replace('rgb', 'rgba');
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+
+        function createExplosion(x, y, radius, color) {
+            explosions.push(new Explosion(x, y, radius, color));
+
+            // Check collision with enemy missiles
+            enemyMissiles = enemyMissiles.filter(missile => {
+                const dist = Math.hypot(missile.x - x, missile.y - y);
+                if (dist < radius) {
+                    game.score += 10;
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        function updatePointer() {
+            if (mouse.active) {
+                pointer.x = mouse.x;
+                pointer.y = mouse.y;
+            } else {
+                // Arrow key movement
+                if (keys['arrowup'] || keys['w']) pointer.y -= pointer.speed;
+                if (keys['arrowdown'] || keys['s']) pointer.y += pointer.speed;
+                if (keys['arrowleft'] || keys['a']) pointer.x -= pointer.speed;
+                if (keys['arrowright'] || keys['d']) pointer.x += pointer.speed;
+
+                // Keep pointer in bounds
+                pointer.x = Math.max(pointer.radius, Math.min(canvas.width - pointer.radius, pointer.x));
+                pointer.y = Math.max(pointer.radius, Math.min(canvas.height - pointer.radius, pointer.y));
+            }
+        }
+
+        function drawPointer() {
+            // Crosshair
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+
+            // Outer circle
+            ctx.beginPath();
+            ctx.arc(pointer.x, pointer.y, pointer.radius * 1.5, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Crosshairs
+            ctx.beginPath();
+            ctx.moveTo(pointer.x - 12, pointer.y);
+            ctx.lineTo(pointer.x - 6, pointer.y);
+            ctx.moveTo(pointer.x + 6, pointer.y);
+            ctx.lineTo(pointer.x + 12, pointer.y);
+            ctx.moveTo(pointer.x, pointer.y - 12);
+            ctx.lineTo(pointer.x, pointer.y - 6);
+            ctx.moveTo(pointer.x, pointer.y + 6);
+            ctx.lineTo(pointer.x, pointer.y + 12);
+            ctx.stroke();
+        }
+
+        function drawBases() {
+            Object.entries(game.bases).forEach(([key, base]) => {
+                // Base structure
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(base.x - 15, base.y - 5, 30, 10);
+                ctx.fillRect(base.x - 3, base.y - 15, 6, 15);
+
+                // Damage indicator
+                const healthPercent = base.ammo / base.maxAmmo;
+                ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff3333';
+                ctx.fillRect(base.x - 20, base.y - 25, 40 * healthPercent, 3);
+            });
+        }
+
+        function spawnWave() {
+            const numMissiles = 3 + game.wave;
+            for (let i = 0; i < numMissiles; i++) {
+                const baseKeys = Object.keys(game.bases);
+                const targetBase = game.bases[baseKeys[Math.floor(Math.random() * 3)]];
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * 150;
+                enemyMissiles.push(new EnemyMissile(x, y, targetBase));
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('score').textContent = `SCORE: ${game.score}`;
+            document.getElementById('wave').textContent = `WAVE: ${game.wave}`;
+            document.getElementById('baseInfo').innerHTML = 
+                `<div class="base-info">Q BASE: ${game.bases.q.ammo}</div>
+                 <div class="base-info">W BASE: ${game.bases.w.ammo}</div>
+                 <div class="base-info">E BASE: ${game.bases.e.ammo}</div>`;
+        }
+
+        // Input for firing
+        document.addEventListener('keydown', (e) => {
+            if (game.gameRunning) {
+                const key = e.key.toLowerCase();
+                if (key === 'q' && game.bases.q.ammo > 0) {
+                    game.bases.q.ammo--;
+                    friendlyMissiles.push(new FriendlyMissile(game.bases.q, pointer.x, pointer.y));
+                } else if (key === 'w' && game.bases.w.ammo > 0) {
+                    game.bases.w.ammo--;
+                    friendlyMissiles.push(new FriendlyMissile(game.bases.w, pointer.x, pointer.y));
+                } else if (key === 'e' && game.bases.e.ammo > 0) {
+                    game.bases.e.ammo--;
+                    friendlyMissiles.push(new FriendlyMissile(game.bases.e, pointer.x, pointer.y));
+                }
+            }
+        });
+
+        canvas.addEventListener('click', () => {
+            if (game.gameRunning) {
+                // Fire from nearest base with ammo
+                let nearest = null;
+                let minDist = Infinity;
+                Object.values(game.bases).forEach(base => {
+                    if (base.ammo > 0) {
+                        const dist = Math.hypot(base.x - pointer.x, base.y - pointer.y);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = base;
+                        }
+                    }
+                });
+                if (nearest) {
+                    nearest.ammo--;
+                    friendlyMissiles.push(new FriendlyMissile(nearest, pointer.x, pointer.y));
+                }
+            }
+        });
+
+        function update() {
+            updatePointer();
+
+            // Update friendly missiles
+            friendlyMissiles = friendlyMissiles.filter(m => m.update());
+
+            // Update enemy missiles
+            enemyMissiles = enemyMissiles.filter(m => {
+                if (!m.update()) {
+                    // Missile reached a base
+                    const dist = Math.hypot(m.x - m.targetBase.x, m.y - m.targetBase.y);
+                    if (dist < 20) {
+                        m.targetBase.ammo = Math.max(0, m.targetBase.ammo - 1);
+                        if (m.targetBase.ammo <= 0) {
+                            game.gameRunning = false;
+                            showGameOver();
+                        }
+                    }
+                    createExplosion(m.x, m.y, 30, 'rgb(255, 100, 0)');
+                    return false;
+                }
+                return true;
+            });
+
+            // Update explosions
+            explosions = explosions.filter(e => e.update());
+
+            // Spawn new wave if all enemies destroyed
+            if (enemyMissiles.length === 0 && friendlyMissiles.length === 0) {
+                game.wave++;
+                
+                // Restore ammo
+                Object.values(game.bases).forEach(base => {
+                    base.ammo = Math.min(base.ammo + 3, base.maxAmmo);
+                });
+                
+                spawnWave();
+            }
+
+            // Check if all bases destroyed
+            const allBasesDestroyed = Object.values(game.bases).every(base => base.ammo <= 0);
+            if (allBasesDestroyed && !game.gameRunning) {
+                showGameOver();
+            }
+
+            updateHUD();
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = 'rgba(0, 20, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw game objects
+            explosions.forEach(e => e.draw());
+            enemyMissiles.forEach(m => m.draw());
+            friendlyMissiles.forEach(m => m.draw());
+            drawBases();
+            drawPointer();
+        }
+
+        function showGameOver() {
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalScore').textContent = `SCORE: ${game.score}`;
+            document.getElementById('waveReached').textContent = `WAVE: ${game.wave}`;
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        spawnWave();
+        gameLoop();
+    </script>
+</body>
+</html>
